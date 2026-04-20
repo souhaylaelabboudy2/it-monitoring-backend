@@ -22,7 +22,8 @@ class ServerController extends Controller
                 'status' => $request->status,
                 'cpu_usage' => $request->cpu,
                 'ram_usage' => $request->ram,
-                'disk_usage' => $request->disk
+                'disk_usage' => $request->disk,
+                'last_check' => now()
             ]);
 
             if ($request->status == "offline") {
