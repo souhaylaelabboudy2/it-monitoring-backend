@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/servers', [ServerController::class, 'index']);
 Route::post('/update-server', [ServerController::class, 'update']);
+Route::get('/stats', [ServerController::class, 'stats']);
 
 Route::get('/alerts', [AlertController::class, 'index']);
 

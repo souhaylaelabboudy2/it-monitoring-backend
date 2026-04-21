@@ -28,7 +28,6 @@ class ServerController extends Controller
                 'last_check' => now()
             ]);
 
-            // Créer une alerte seulement si le statut a changé vers offline
             if ($oldStatus !== "offline" && $request->status === "offline") {
                 Alert::create([
                     'message' => "Server down: " . $request->name,
@@ -36,7 +35,6 @@ class ServerController extends Controller
                 ]);
             }
             
-            // Créer une alerte si le serveur revient online
             if ($oldStatus === "offline" && $request->status === "online") {
                 Alert::create([
                     'message' => "Server back online: " . $request->name,
@@ -50,5 +48,18 @@ class ServerController extends Controller
             'message' => 'Server updated successfully',
             'server' => $server
         ], 200);
+    }
+
+    public function stats()
+    {
+        $total = Server::count();
+        $online = Server::where('status', 'online')->count();
+        $offline = Server::where('status', 'offline')->count();
+
+        return response()->json([
+            'total' => $total,
+            'online' => $online,
+            'offline' => $offline
+        ]);
     }
 }
