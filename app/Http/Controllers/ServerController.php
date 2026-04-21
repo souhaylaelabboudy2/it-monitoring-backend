@@ -18,6 +18,8 @@ class ServerController extends Controller
         $server = Server::where('name', $request->name)->first();
 
         if ($server) {
+            $oldStatus = $server->status;
+            
             $server->update([
                 'status' => $request->status,
                 'cpu_usage' => $request->cpu,
@@ -26,14 +28,27 @@ class ServerController extends Controller
                 'last_check' => now()
             ]);
 
-            if ($request->status == "offline") {
+            // Créer une alerte seulement si le statut a changé vers offline
+            if ($oldStatus !== "offline" && $request->status === "offline") {
                 Alert::create([
                     'message' => "Server down: " . $request->name,
                     'type' => "server"
                 ]);
             }
+            
+            // Créer une alerte si le serveur revient online
+            if ($oldStatus === "offline" && $request->status === "online") {
+                Alert::create([
+                    'message' => "Server back online: " . $request->name,
+                    'type' => "server"
+                ]);
+            }
         }
 
-        return response()->json(['message' => 'updated']);
+        return response()->json([
+            'success' => true,
+            'message' => 'Server updated successfully',
+            'server' => $server
+        ], 200);
     }
 }

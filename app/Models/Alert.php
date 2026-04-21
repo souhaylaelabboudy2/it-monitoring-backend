@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Alert extends Model
 {
     protected $fillable = [
-    'message',
-    'type'
-];
+        'message',
+        'type'
+    ];
 }
