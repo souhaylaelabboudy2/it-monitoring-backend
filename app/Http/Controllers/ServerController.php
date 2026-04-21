@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Server;
 use App\Models\Alert;
+use App\Events\ServerUpdated;
 use Illuminate\Http\Request;
 
 class ServerController extends Controller
@@ -27,6 +28,8 @@ class ServerController extends Controller
                 'disk_usage' => $request->disk,
                 'last_check' => now()
             ]);
+
+            event(new ServerUpdated($server));
 
             if ($oldStatus !== "offline" && $request->status === "offline") {
                 Alert::create([
