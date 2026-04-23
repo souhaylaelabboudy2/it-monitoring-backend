@@ -29,7 +29,11 @@ class ServerController extends Controller
                 'last_check' => now()
             ]);
 
-            event(new ServerUpdated($server));
+            try {
+    event(new ServerUpdated($server));
+} catch (\Exception $e) {
+    \Log::error('Broadcasting error: ' . $e->getMessage());
+}
 
             if ($oldStatus !== "offline" && $request->status === "offline") {
                 Alert::create([
