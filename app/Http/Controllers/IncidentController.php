@@ -50,6 +50,33 @@ class IncidentController extends Controller
         ], Response::HTTP_CREATED);
     }
 
+    public function createFromSystem($title, $description, $severity)
+    {
+        $incident = Incident::create([
+            'title' => $title,
+            'description' => $description,
+            'severity' => $severity,
+            'status' => 'open'
+        ]);
+
+        \App\Models\Alert::create([
+            'message' => $title,
+            'type' => 'system',
+            'incident_id' => $incident->id
+        ]);
+
+        return $incident;
+    }
+
+    public function storeSystem(Request $request)
+{
+    return $this->createFromSystem(
+        $request->title,
+        $request->description,
+        $request->severity
+    );
+}
+
     public function update(Request $request, $id)
     {
         $incident = Incident::find($id);

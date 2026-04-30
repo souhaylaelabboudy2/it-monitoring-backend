@@ -24,6 +24,7 @@ Route::get('/incidents', [IncidentController::class, 'index']);
 Route::post('/incidents', [IncidentController::class, 'store']);
 Route::put('/incidents/{id}', [IncidentController::class, 'update']);
 Route::delete('/incidents/{id}', [IncidentController::class, 'destroy']);
+Route::post('/system/incident', [IncidentController::class, 'storeSystem']);
 
 Route::post('/update-nvr', [NvrController::class, 'update']);
 
@@ -31,3 +32,4 @@ Route::get('/backups', [BackupController::class, 'index']);
 Route::post('/update-backup', [BackupController::class, 'update']);
 
 Route::get('/zabbix/hosts', [ZabbixController::class, 'getHosts']);
+

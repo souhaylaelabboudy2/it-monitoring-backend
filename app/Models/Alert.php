@@ -8,6 +8,12 @@ class Alert extends Model
 {
     protected $fillable = [
         'message',
-        'type'
+        'type',
+        'incident_id'
     ];
+
+    public function incident()
+    {
+        return $this->belongsTo(Incident::class);
+    }
 }

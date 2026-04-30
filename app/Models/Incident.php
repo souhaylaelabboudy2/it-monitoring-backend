@@ -17,4 +17,9 @@ class Incident extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
     ];
+
+    public function alerts()
+    {
+        return $this->hasMany(Alert::class);
+    }
 }
