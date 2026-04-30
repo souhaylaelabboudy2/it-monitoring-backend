@@ -7,9 +7,14 @@ use Illuminate\Database\Eloquent\Model;
 class Incident extends Model
 {
     protected $fillable = [
-    'title',
-    'description',
-    'priority',
-    'status'
-];
+        'title',
+        'description',
+        'severity',
+        'status'
+    ];
+
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime'
+    ];
 }
