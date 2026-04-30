@@ -6,7 +6,7 @@ import random
 API_URL = "http://127.0.0.1:8000/api/update-server"
 ZABBIX_URL = "http://localhost:8090/api_jsonrpc.php"
 INCIDENTS_URL = "http://127.0.0.1:8000/api/system/incident"
-BACKUP_URL = "http://127.0.0.1:8000/api/update-backup"
+BACKUP_URL = "http://127.0.0.1:8000/api/backups"
 NVR_URL = "http://127.0.0.1:8000/api/update-nvr"
 
 servers = [

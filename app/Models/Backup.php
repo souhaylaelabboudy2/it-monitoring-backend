@@ -6,9 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class Backup extends Model
 {
-   protected $fillable = [
-    'server_id',
-    'status',
-    'backup_date'
-];
+    protected $fillable = [
+        'server_name',
+        'status',
+        'date'
+    ];
+
+    protected $casts = [
+        'date' => 'datetime'
+    ];
 }

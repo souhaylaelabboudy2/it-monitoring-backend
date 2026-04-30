@@ -29,6 +29,7 @@ Route::post('/system/incident', [IncidentController::class, 'storeSystem']);
 Route::post('/update-nvr', [NvrController::class, 'update']);
 
 Route::get('/backups', [BackupController::class, 'index']);
+Route::post('/backups', [BackupController::class, 'store']);
 Route::post('/update-backup', [BackupController::class, 'update']);
 
 Route::get('/zabbix/hosts', [ZabbixController::class, 'getHosts']);
