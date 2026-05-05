@@ -8,14 +8,10 @@ use Illuminate\Http\Request;
 
 class BackupController extends Controller
 {
-    /**
-     * Get all backups
-     * GET /api/backups
-     */
     public function index()
     {
         try {
-            $backups = Backup::latest('date')->get();
+            $backups = Backup::orderBy('created_at', 'desc')->get();
             
             return response()->json([
                 'success' => true,
@@ -31,38 +27,41 @@ class BackupController extends Controller
         }
     }
 
-    /**
-     * Create a new backup
-     * POST /api/backups
-     */
     public function store(Request $request)
     {
-        // Validate input
         $validated = $request->validate([
             'server_name' => 'required|string|max:255',
             'status' => 'required|in:success,failed',
-            'date' => 'nullable|date_format:Y-m-d H:i:s'
-        ], [
-            'server_name.required' => 'Server name is required',
-            'server_name.string' => 'Server name must be a string',
-            'server_name.max' => 'Server name cannot exceed 255 characters',
-            'status.required' => 'Status is required',
-            'status.in' => 'Status must be either "success" or "failed"',
-            'date.date_format' => 'Date must be in format: Y-m-d H:i:s'
         ]);
 
         try {
-            // Create the backup record
+            // Get last backup for this server
+            $last = Backup::where('server_name', $validated['server_name'])
+                          ->latest()
+                          ->first();
+
+            // Check if we should insert: status changed OR 5+ minutes passed
+            if ($last) {
+                $statusChanged = $last->status !== $validated['status'];
+                $minutesPassed = now()->diffInMinutes($last->created_at);
+                
+                if (!$statusChanged && $minutesPassed < 5) {
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'No change & within 5min window - backup not inserted',
+                        'data' => $last
+                    ], 200);
+                }
+            }
+
             $backup = Backup::create([
                 'server_name' => $validated['server_name'],
-                'status' => $validated['status'],
-                'date' => $validated['date'] ?? now()
+                'status' => $validated['status']
             ]);
 
-            // Create alert if backup failed
             if ($validated['status'] === 'failed') {
                 Alert::create([
-                    'message' => "Backup failed for " . $request->server_name,
+                    'message' => "Backup failed for " . $validated['server_name'],
                     'type' => 'backup'
                 ]);
             }
@@ -81,10 +80,6 @@ class BackupController extends Controller
         }
     }
 
-    /**
-     * Mettre à jour un backup (legacy endpoint)
-     * POST /api/update-backup
-     */
     public function update(Request $request)
     {
         return $this->store($request);

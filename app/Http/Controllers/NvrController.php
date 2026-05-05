@@ -32,7 +32,9 @@ class NvrController extends Controller
      * Request body:
      * {
      *   "name": "NVR Master",
+     *   "type": "master",
      *   "status": "online",
+     *   "sync_status": "synced",
      *   "cameras_count": 12,
      *   "disk_usage": 65.5
      * }
@@ -43,24 +45,35 @@ class NvrController extends Controller
         try {
             $validated = $request->validate([
                 'name' => 'required|string|max:255',
+                'type' => 'sometimes|in:standard,master',
                 'status' => 'required|in:online,offline',
+                'sync_status' => 'sometimes|in:synced,lost',
                 'cameras_count' => 'sometimes|integer|min:0|max:256',
                 'disk_usage' => 'sometimes|numeric|min:0|max:100'
+            ], [
+                'name.required' => 'NVR name is required',
+                'type.in' => 'Type must be either "standard" or "master"',
+                'status.required' => 'Status is required',
+                'status.in' => 'Status must be either "online" or "offline"',
+                'sync_status.in' => 'Sync status must be either "synced" or "lost"',
+                'disk_usage.numeric' => 'Disk usage must be a number'
             ]);
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur de validation',
+                'message' => 'Validation error',
                 'errors' => $e->errors()
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        // Rechercher ou créer le NVR
+        // Rechercher oder créer le NVR
         $nvr = Nvr::where('name', $validated['name'])->first();
         
         if (!$nvr) {
             $nvr = Nvr::create([
                 'name' => $validated['name'],
+                'type' => $validated['type'] ?? 'standard',
+                'sync_status' => $validated['sync_status'] ?? 'synced',
                 'status' => $validated['status'],
                 'cameras_count' => $validated['cameras_count'] ?? 0,
                 'disk_usage' => $validated['disk_usage'] ?? 0,
@@ -78,48 +91,52 @@ class NvrController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'NVR created successfully',
-                'nvr' => $nvr
+                'data' => $nvr
             ], Response::HTTP_CREATED);
         }
 
         // Récupérer les anciennes valeurs pour la comparaison
         $oldStatus = $nvr->status;
         $oldCamerasCount = $nvr->cameras_count;
+        $oldDiskUsage = $nvr->disk_usage;
+        $oldSyncStatus = $nvr->sync_status;
 
         // Mettre à jour le NVR
         $nvr->update([
+            'type' => $validated['type'] ?? $nvr->type,
+            'sync_status' => $validated['sync_status'] ?? $oldSyncStatus,
             'status' => $validated['status'],
             'cameras_count' => $validated['cameras_count'] ?? $oldCamerasCount,
-            'disk_usage' => $validated['disk_usage'] ?? $nvr->disk_usage,
+            'disk_usage' => $validated['disk_usage'] ?? $oldDiskUsage,
             'last_check' => now()
         ]);
 
-        // Gestion des alertes de statut
-        if ($oldStatus !== "offline" && $validated['status'] === "offline") {
+        // ===== ALERTS =====
+        if ($validated['status'] === 'offline') {
             Alert::create([
-                'message' => "NVR down: " . $validated['name'],
-                'type' => "nvr"
-            ]);
-        } elseif ($oldStatus === "offline" && $validated['status'] === "online") {
-            Alert::create([
-                'message' => "NVR back online: " . $validated['name'],
-                'type' => "nvr"
+                'message' => "NVR offline: " . $validated['name'],
+                'type' => 'nvr'
             ]);
         }
 
-        // Gestion des alertes de caméras
-        if ($oldCamerasCount > 0 && $validated['cameras_count'] < $oldCamerasCount) {
-            $cameraDifference = $oldCamerasCount - $validated['cameras_count'];
+        if (($validated['disk_usage'] ?? 0) > 90) {
             Alert::create([
-                'message' => "NVR camera drop: " . $validated['name'] . " (" . $cameraDifference . " cameras lost)",
-                'type' => "nvr"
+                'message' => "NVR disk full: " . $validated['name'],
+                'type' => 'nvr'
+            ]);
+        }
+
+        if ($validated['type'] === 'master' && $validated['sync_status'] === 'lost') {
+            Alert::create([
+                'message' => "NVR MASTER sync lost: " . $validated['name'],
+                'type' => 'nvr'
             ]);
         }
 
         return response()->json([
             'success' => true,
             'message' => 'NVR updated successfully',
-            'nvr' => $nvr
+            'data' => $nvr
         ], Response::HTTP_OK);
     }
 }
