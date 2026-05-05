@@ -6,8 +6,17 @@ import random
 API_URL = "http://127.0.0.1:8000/api/update-server"
 ZABBIX_URL = "http://localhost:8090/api_jsonrpc.php"
 INCIDENTS_URL = "http://127.0.0.1:8000/api/system/incident"
-BACKUP_URL = "http://127.0.0.1:8000/api/backups"
+BACKUP_URL = "http://127.0.0.1:8000/api/update-backup"
 NVR_URL = "http://127.0.0.1:8000/api/update-nvr"
+HEADERS = {"Content-Type": "application/json"}
+
+# ✅ Cache pour éviter la répétition
+last_backup_status = {}
+last_backup_time = {}
+
+last_nvr_status = {}
+last_nvr_time = {}
+last_nvr_sync = {}
 
 servers = [
     {"name": "Active Directory", "ip": "127.0.0.1"},
@@ -88,7 +97,7 @@ while True:
                     "title": f"{server['name']} is DOWN",
                     "description": "Server not responding",
                     "severity": "high"
-                })
+                }, headers=HEADERS)
                 print(f"🚨 Incident créé pour {server['name']}")
 
         except Exception as e:
@@ -98,20 +107,28 @@ while True:
     for server in servers:
         try:
             backup_status = random.choice(["success", "success", "failed"])
+            current_time = time.time()
 
-            requests.post(BACKUP_URL, json={
-                "server_name": server["name"],
-                "status": backup_status,
-            })
-            print(f"💾 Backup [{server['name']}] → {backup_status}")
+            if (
+                last_backup_status.get(server["name"]) != backup_status
+                or current_time - last_backup_time.get(server["name"], 0) > 300
+            ):
+                requests.post(BACKUP_URL, json={
+                    "server_name": server["name"],
+                    "status": backup_status,
+                }, headers=HEADERS)
+                print(f"💾 Backup [{server['name']}] → {backup_status}")
 
-            if backup_status == "failed":
-                requests.post(INCIDENTS_URL, json={
-                    "title": f"Backup FAILED for {server['name']}",
-                    "description": "Backup job did not complete successfully",
-                    "severity": "high"
-                })
-                print(f"🚨 Incident backup créé pour {server['name']}")
+                if backup_status == "failed" and last_backup_status.get(server["name"]) != "failed":
+                    requests.post(INCIDENTS_URL, json={
+                        "title": f"Backup FAILED for {server['name']}",
+                        "description": "Backup job did not complete successfully",
+                        "severity": "high"
+                    }, headers=HEADERS)
+                    print(f"🚨 Incident backup créé pour {server['name']}")
+
+                last_backup_status[server["name"]] = backup_status
+                last_backup_time[server["name"]] = current_time
 
         except Exception as e:
             print(f"❌ Backup Error [{server['name']}]: {e}")
@@ -122,24 +139,60 @@ while True:
             nvr_status = random.choice(["online", "online", "offline"])
             cameras = random.randint(5, 20)
             disk = random.randint(40, 95)
+            current_time = time.time()
 
-            requests.post(NVR_URL, json={
+            nvr_type = "master" if "Master" in nvr["name"] else "standard"
+            
+            # Only assign sync_status for master NVRs
+            if nvr_type == "master":
+                sync_status = "lost" if random.randint(0, 4) == 2 else "synced"
+            else:
+                sync_status = None
+
+            # Build data payload - only include sync_status for master
+            data = {
                 "name": nvr["name"],
                 "status": nvr_status,
                 "cameras_count": cameras,
-                "disk_usage": disk
-            })
-            print(f"📹 NVR [{nvr['name']}] → {nvr_status} | Cameras={cameras} Disk={disk}%")
+                "disk_usage": disk,
+                "type": nvr_type,
+            }
+            if nvr_type == "master":
+                data["sync_status"] = sync_status
 
-            if nvr_status == "offline":
-                requests.post(INCIDENTS_URL, json={
-                    "title": f"NVR {nvr['name']} is OFFLINE",
-                    "description": "NVR system not responding",
-                    "severity": "high"
-                })
-                print(f"🚨 Incident NVR créé pour {nvr['name']}")
+            # Send if: status changed OR 5min passed OR sync_status changed (master only)
+            status_changed = last_nvr_status.get(nvr["name"]) != nvr_status
+            time_passed = current_time - last_nvr_time.get(nvr["name"], 0) > 300
+            sync_changed = (nvr_type == "master" and last_nvr_sync.get(nvr["name"]) != sync_status)
+
+            if status_changed or time_passed or sync_changed:
+                requests.post(NVR_URL, json=data, headers=HEADERS)
+                print(f"📹 NVR [{nvr['name']}] → {nvr_status} | Type={nvr_type} Sync={sync_status} | Cameras={cameras} Disk={disk}%")
+
+                if nvr_status == "offline":
+                    requests.post(INCIDENTS_URL, json={
+                        "title": f"NVR {nvr['name']} is OFFLINE",
+                        "description": "NVR system not responding",
+                        "severity": "high"
+                    }, headers=HEADERS)
+                    print(f"🚨 Incident NVR créé pour {nvr['name']}")
+
+                if nvr_type == "master" and sync_status == "lost":
+                    requests.post(INCIDENTS_URL, json={
+                        "title": f"NVR {nvr['name']} sync LOST",
+                        "description": "NVR Master lost synchronization",
+                        "severity": "medium"
+                    }, headers=HEADERS)
+                    print(f"🚨 Incident sync créé pour {nvr['name']}")
+
+                # Update all tracking caches
+                last_nvr_status[nvr["name"]] = nvr_status
+                last_nvr_time[nvr["name"]] = current_time
+                if nvr_type == "master":
+                    last_nvr_sync[nvr["name"]] = sync_status
 
         except Exception as e:
             print(f"❌ NVR Error [{nvr['name']}]: {e}")
 
-    time.sleep(10)
+    print("------ LOOP END ------")
+    time.sleep(60)
