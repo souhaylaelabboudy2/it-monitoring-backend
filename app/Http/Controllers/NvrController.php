@@ -10,10 +10,6 @@ use Illuminate\Validation\ValidationException;
 
 class NvrController extends Controller
 {
-    /**
-     * Récupère tous les NVR
-     * GET /api/nvr
-     */
     public function index()
     {
         $nvrs = Nvr::orderBy('name')->get();
@@ -25,23 +21,8 @@ class NvrController extends Controller
         ], Response::HTTP_OK);
     }
 
-    /**
-     * Mettre à jour un NVR avec validation
-     * POST /api/update-nvr
-     * 
-     * Request body:
-     * {
-     *   "name": "NVR Master",
-     *   "type": "master",
-     *   "status": "online",
-     *   "sync_status": "synced",
-     *   "cameras_count": 12,
-     *   "disk_usage": 65.5
-     * }
-     */
     public function update(Request $request)
     {
-        // Validation des données d'entrée
         try {
             $validated = $request->validate([
                 'name' => 'required|string|max:255',
@@ -66,7 +47,6 @@ class NvrController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        // Rechercher oder créer le NVR
         $nvr = Nvr::where('name', $validated['name'])->first();
         
         if (!$nvr) {
@@ -80,12 +60,12 @@ class NvrController extends Controller
                 'last_check' => now()
             ]);
             
-            // Alerte pour nouveau NVR offline
             if ($validated['status'] === 'offline') {
                 Alert::create([
                     'message' => "New NVR detected offline: " . $validated['name'],
                     'type' => "nvr"
                 ]);
+                add_log('nvr_offline', 'nvr', $validated['name']);
             }
             
             return response()->json([
@@ -95,13 +75,11 @@ class NvrController extends Controller
             ], Response::HTTP_CREATED);
         }
 
-        // Récupérer les anciennes valeurs pour la comparaison
         $oldStatus = $nvr->status;
         $oldCamerasCount = $nvr->cameras_count;
         $oldDiskUsage = $nvr->disk_usage;
         $oldSyncStatus = $nvr->sync_status;
 
-        // Mettre à jour le NVR
         $nvr->update([
             'type' => $validated['type'] ?? $nvr->type,
             'sync_status' => $validated['sync_status'] ?? $oldSyncStatus,
@@ -112,11 +90,23 @@ class NvrController extends Controller
         ]);
 
         // ===== ALERTS =====
-        if ($validated['status'] === 'offline') {
+        if ($oldStatus !== 'offline' && $validated['status'] === 'offline') {
             Alert::create([
                 'message' => "NVR offline: " . $validated['name'],
                 'type' => 'nvr'
             ]);
+            add_log('nvr_offline', 'nvr', $validated['name']);
+        } elseif ($oldStatus === 'offline' && $validated['status'] === 'online') {
+            add_log('nvr_up', 'nvr', $validated['name']);
+        }
+
+        // Log sync status changes for master NVRs
+        if ($validated['type'] === 'master' && $oldSyncStatus !== ($validated['sync_status'] ?? $oldSyncStatus)) {
+            if (($validated['sync_status'] ?? $oldSyncStatus) === 'lost') {
+                add_log('nvr_sync_lost', 'nvr', $validated['name']);
+            } elseif ($oldSyncStatus === 'lost' && ($validated['sync_status'] ?? $oldSyncStatus) === 'synced') {
+                add_log('nvr_sync_restored', 'nvr', $validated['name']);
+            }
         }
 
         if (($validated['disk_usage'] ?? 0) > 90) {

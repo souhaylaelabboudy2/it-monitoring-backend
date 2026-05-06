@@ -15,38 +15,45 @@ class ServerController extends Controller
     }
 
     public function update(Request $request)
-{
-    $server = Server::updateOrCreate(
-        ['name' => $request->name],
-        [
-            'status' => $request->status,
-            'ip' => $request->ip,
-            'cpu_usage' => $request->cpu,
-            'ram_usage' => $request->ram,
-            'disk_usage' => $request->disk,
-            'last_check' => now()
-        ]
-    );
+    {
+        $server = Server::where('name', $request->name)->first();
+        $oldStatus = $server ? $server->status : null;
 
-    try {
-        event(new ServerUpdated($server));
-    } catch (\Exception $e) {
-        \Log::error('Broadcasting error: ' . $e->getMessage());
+        $server = Server::updateOrCreate(
+            ['name' => $request->name],
+            [
+                'status' => $request->status,
+                'ip' => $request->ip,
+                'cpu_usage' => $request->cpu,
+                'ram_usage' => $request->ram,
+                'disk_usage' => $request->disk,
+                'last_check' => now()
+            ]
+        );
+
+        try {
+            event(new ServerUpdated($server));
+        } catch (\Exception $e) {
+            \Log::error('Broadcasting error: ' . $e->getMessage());
+        }
+
+        if ($oldStatus !== "offline" && $request->status === "offline") {
+            Alert::create([
+                'message' => "Server down: " . $request->name,
+                'type' => "server"
+            ]);
+            add_log('server_down', 'server', $request->name);
+        } elseif ($oldStatus === "offline" && $request->status === "online") {
+            add_log('server_up', 'server', $request->name);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Server updated successfully',
+            'server' => $server
+        ], 200);
     }
 
-    if ($request->status === "offline") {
-        Alert::create([
-            'message' => "Server down: " . $request->name,
-            'type' => "server"
-        ]);
-    }
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Server updated successfully',
-        'server' => $server
-    ], 200);
-}
     public function stats()
     {
         $total = Server::count();

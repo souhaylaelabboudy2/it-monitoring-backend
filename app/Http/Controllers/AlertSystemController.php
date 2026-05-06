@@ -96,6 +96,9 @@ class AlertSystemController extends Controller
                 'last_seen' => now()
             ]);
 
+            // Log alert creation
+            add_log('alert_created', 'alert', $validated['title']);
+
             // If critical, create incident (only once, for new alerts)
             if ($validated['severity'] === 'critical') {
                 Incident::create([
@@ -161,6 +164,9 @@ class AlertSystemController extends Controller
                     'status' => 'resolved',
                     'last_seen' => now()
                 ]);
+
+                // Log alert resolution
+                add_log('alert_resolved', 'alert', $validated['key']);
 
                 return response()->json([
                     'success' => true,

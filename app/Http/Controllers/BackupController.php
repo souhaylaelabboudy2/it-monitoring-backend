@@ -35,12 +35,10 @@ class BackupController extends Controller
         ]);
 
         try {
-            // Get last backup for this server
             $last = Backup::where('server_name', $validated['server_name'])
                           ->latest()
                           ->first();
 
-            // Check if we should insert: status changed OR 5+ minutes passed
             if ($last) {
                 $statusChanged = $last->status !== $validated['status'];
                 $minutesPassed = now()->diffInMinutes($last->created_at);
@@ -64,6 +62,9 @@ class BackupController extends Controller
                     'message' => "Backup failed for " . $validated['server_name'],
                     'type' => 'backup'
                 ]);
+                add_log('backup_failed', 'backup', $validated['server_name']);
+            } elseif ($validated['status'] === 'success') {
+                add_log('backup_success', 'backup', $validated['server_name']);
             }
 
             return response()->json([
