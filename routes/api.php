@@ -7,6 +7,7 @@ use App\Http\Controllers\IncidentController;
 use App\Http\Controllers\NvrController;
 use App\Http\Controllers\BackupController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\LogController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ZabbixController;
 
@@ -16,6 +17,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/servers', [ServerController::class, 'index']);
     Route::get('/nvr', [NvrController::class, 'index']);
     Route::get('/alerts', [AlertController::class, 'index']);
+    Route::get('/logs', [LogController::class, 'index']);
+    Route::get('/logs/search', [LogController::class, 'show']);
 });
 
 Route::post('/update-server', [ServerController::class, 'update']);
@@ -34,12 +37,6 @@ Route::post('/backups', [BackupController::class, 'store']);
 Route::post('/update-backup', [BackupController::class, 'update']);
 
 Route::get('/zabbix/hosts', [ZabbixController::class, 'getHosts']);
-
-// Alert System (no auth required for Python monitoring script)
-Route::get('/alerts-system', [AlertSystemController::class, 'index']);
-Route::post('/alerts', [AlertSystemController::class, 'store']);
-Route::post('/alerts/resolve', [AlertSystemController::class, 'resolve']);
-
 
 // Alert System (no auth required for Python monitoring script)
 Route::get('/alerts-system', [AlertSystemController::class, 'index']);
