@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ServerController;
 use App\Http\Controllers\AlertController;
+use App\Http\Controllers\AlertSystemController;
 use App\Http\Controllers\IncidentController;
 use App\Http\Controllers\NvrController;
 use App\Http\Controllers\BackupController;
@@ -33,4 +34,15 @@ Route::post('/backups', [BackupController::class, 'store']);
 Route::post('/update-backup', [BackupController::class, 'update']);
 
 Route::get('/zabbix/hosts', [ZabbixController::class, 'getHosts']);
+
+// Alert System (no auth required for Python monitoring script)
+Route::get('/alerts-system', [AlertSystemController::class, 'index']);
+Route::post('/alerts', [AlertSystemController::class, 'store']);
+Route::post('/alerts/resolve', [AlertSystemController::class, 'resolve']);
+
+
+// Alert System (no auth required for Python monitoring script)
+Route::get('/alerts-system', [AlertSystemController::class, 'index']);
+Route::post('/alerts', [AlertSystemController::class, 'store']);
+Route::post('/alerts/resolve', [AlertSystemController::class, 'resolve']);
 
