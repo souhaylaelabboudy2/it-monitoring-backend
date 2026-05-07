@@ -20,9 +20,11 @@ last_nvr_status = {}
 last_nvr_time = {}
 last_nvr_sync = {}
 nvr_uptime = {}  # Track NVR uptime in seconds
+nvr_sync_failure_count = {}  # Track consecutive NVR sync failures for escalation
 
 last_server_status = {}  # Track server status for resolution
 server_warning_time = {}  # Track when server entered warning state
+server_resource_warning_count = {}  # Track consecutive cycles with resource warnings
 last_alert_time = {}  # Track alert cooldown (5 min)
 
 servers = [
@@ -192,20 +194,33 @@ while True:
                 resource_alert_key = f"server_resources_{server['name'].replace(' ', '_')}"
                 msg = f"CPU: {cpu}% | RAM: {ram}%"
                 
+                # ✅ ESCALATION: Track consecutive cycles with resource warnings
+                server_resource_warning_count[server['name']] = server_resource_warning_count.get(server['name'], 0) + 1
+                warning_cycles = server_resource_warning_count[server['name']]
+                
+                # Escalate to critical if warning persists for 3+ cycles
+                escalated_severity = "critical" if warning_cycles >= 3 else severity
+                
                 if should_send_alert(resource_alert_key):
                     send_alert(
                         key=resource_alert_key,
                         title=f"{server['name']} High Resource Usage",
-                        message=msg,
+                        message=f"{msg} (Warning cycle: {warning_cycles})",
                         alert_type="server",
-                        severity=severity
+                        severity=escalated_severity
                     )
-                    print(f"⚠️ Alert: {server['name']} resource usage high")
+                    if escalated_severity == "critical":
+                        print(f"🔴 CRITICAL Alert: {server['name']} resource usage critical ({warning_cycles} cycles)")
+                    else:
+                        print(f"⚠️ Alert: {server['name']} resource usage high")
             else:
-                # Resource usage normal - resolve if previously warned
+                # Resource usage normal - reset counter and resolve if previously warned
                 resource_alert_key = f"server_resources_{server['name'].replace(' ', '_')}"
-                if last_alert_time.get(resource_alert_key, 0) > 0:
-                    resolve_alert(resource_alert_key)
+                if server_resource_warning_count.get(server['name'], 0) > 0:
+                    server_resource_warning_count[server['name']] = 0
+                    if last_alert_time.get(resource_alert_key, 0) > 0:
+                        resolve_alert(resource_alert_key)
+                        print(f"✅ Resolved: {server['name']} resource usage normal")
 
             last_server_status[server['name']] = status
 
@@ -385,18 +400,29 @@ while True:
                     last_sync = last_nvr_sync.get(nvr["name"])
                     
                     if sync_status == "lost":
+                        # ✅ ESCALATION: Track consecutive cycles with sync loss
+                        nvr_sync_failure_count[nvr["name"]] = nvr_sync_failure_count.get(nvr["name"], 0) + 1
+                        sync_failures = nvr_sync_failure_count[nvr["name"]]
+                        
+                        # Escalate to critical if sync loss persists for 2+ cycles
+                        escalated_severity = "critical" if sync_failures >= 2 else "warning"
+                        
                         if should_send_alert(sync_alert_key):
                             send_alert(
                                 key=sync_alert_key,
                                 title=f"NVR {nvr['name']} SYNC LOST",
-                                message="NVR Master lost synchronization",
+                                message=f"NVR Master lost synchronization (Cycle: {sync_failures})",
                                 alert_type="nvr",
-                                severity="warning"
+                                severity=escalated_severity
                             )
-                            print(f"⚠️ Alert: {nvr['name']} sync LOST")
+                            if escalated_severity == "critical":
+                                print(f"🔴 CRITICAL: {nvr['name']} sync LOST ({sync_failures} cycles)")
+                            else:
+                                print(f"⚠️ Alert: {nvr['name']} sync LOST")
                     else:
-                        # Sync is back - resolve alert if it was previously lost
-                        if last_sync == "lost":
+                        # Sync is back - reset counter and resolve alert if it was previously lost
+                        if nvr_sync_failure_count.get(nvr["name"], 0) > 0:
+                            nvr_sync_failure_count[nvr["name"]] = 0
                             resolve_alert(sync_alert_key)
                             print(f"✅ Resolved: {nvr['name']} sync RESTORED")
                 
