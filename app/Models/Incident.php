@@ -18,8 +18,37 @@ class Incident extends Model
         'updated_at' => 'datetime'
     ];
 
+    /**
+     * Relationship: An incident has many alerts
+     */
     public function alerts()
     {
         return $this->hasMany(Alert::class);
+    }
+
+    /**
+     * Check if incident is resolved
+     */
+    public function isResolved(): bool
+    {
+        return $this->status === 'resolved';
+    }
+
+    /**
+     * Resolve this incident
+     */
+    public function resolve(): void
+    {
+        // Resolve all related alerts too
+        $this->alerts()->update(['status' => 'resolved']);
+        $this->update(['status' => 'resolved']);
+    }
+
+    /**
+     * Acknowledge this incident
+     */
+    public function acknowledge(): void
+    {
+        $this->update(['status' => 'acknowledged']);
     }
 }
