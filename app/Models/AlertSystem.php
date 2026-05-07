@@ -15,6 +15,7 @@ class AlertSystem extends Model
         'type',
         'severity',
         'status',
+        'incident_id',
         'last_seen'
     ];
 
@@ -23,4 +24,28 @@ class AlertSystem extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
     ];
+
+    /**
+     * Relationship: An alert belongs to an incident
+     */
+    public function incident()
+    {
+        return $this->belongsTo(Incident::class);
+    }
+
+    /**
+     * Find alert by unique key
+     */
+    public static function findByKey(string $key): ?self
+    {
+        return self::where('key', $key)->first();
+    }
+
+    /**
+     * Check if alert is resolved
+     */
+    public function isResolved(): bool
+    {
+        return $this->status === 'resolved';
+    }
 }

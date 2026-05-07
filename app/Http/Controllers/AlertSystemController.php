@@ -36,7 +36,7 @@ class AlertSystemController extends Controller
     }
 
     /**
-     * Store or update alert
+     * Store or update alert with escalation logic
      * POST /api/alerts
      * 
      * Request body:
@@ -67,25 +67,62 @@ class AlertSystemController extends Controller
         }
 
         try {
-            // Check if alert already exists
+            // ✅ CHECK FOR EXISTING ALERT BY KEY
             $alert = AlertSystem::where('key', $validated['key'])->first();
 
             if ($alert) {
-                // Alert exists - just update last_seen and mark as active
+                // ✅ ESCALATION TRACKING: Update existing alert
+                $oldSeverity = $alert->severity;
+                $newSeverity = $validated['severity'];
+                
+                // Update alert with new data
                 $alert->update([
+                    'title' => $validated['title'],
+                    'message' => $validated['message'],
+                    'severity' => $newSeverity,
                     'status' => 'active',
                     'last_seen' => now()
                 ]);
 
+                // ✅ INCIDENT CREATION ONLY WHEN ESCALATING TO CRITICAL
+                if ($newSeverity === 'critical' && $oldSeverity !== 'critical' && !$alert->incident_id) {
+                    // Create incident ONLY ONCE when severity becomes critical
+                    $incident = Incident::create([
+                        'title' => $validated['title'],
+                        'description' => $validated['message'],
+                        'severity' => 'high',
+                        'status' => 'open'
+                    ]);
+
+                    // Link alert to the incident
+                    $alert->update(['incident_id' => $incident->id]);
+
+                    add_log('incident_escalation', 'alert', "Alert escalated to critical: {$validated['key']}");
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Alert escalated to CRITICAL - Incident created',
+                        'data' => $alert,
+                        'is_new' => false,
+                        'escalated' => true,
+                        'incident_created' => true,
+                        'incident' => $incident
+                    ], Response::HTTP_OK);
+                }
+
+                add_log('alert_updated', 'alert', "Alert updated: {$validated['key']}");
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Alert updated',
+                    'message' => 'Alert updated (severity: ' . $newSeverity . ')',
                     'data' => $alert,
-                    'is_new' => false
+                    'is_new' => false,
+                    'escalated' => false,
+                    'severity_changed' => $oldSeverity !== $newSeverity
                 ], Response::HTTP_OK);
             }
 
-            // New alert - create it
+            // ✅ CREATE NEW ALERT
             $alert = AlertSystem::create([
                 'key' => $validated['key'],
                 'title' => $validated['title'],
@@ -96,25 +133,36 @@ class AlertSystemController extends Controller
                 'last_seen' => now()
             ]);
 
-            // Log alert creation
             add_log('alert_created', 'alert', $validated['title']);
 
-            // If critical, create incident (only once, for new alerts)
+            // ✅ CREATE INCIDENT ONLY IF NEW ALERT IS CRITICAL
             if ($validated['severity'] === 'critical') {
-                Incident::create([
+                $incident = Incident::create([
                     'title' => $validated['title'],
                     'description' => $validated['message'],
                     'severity' => 'high',
                     'status' => 'open'
                 ]);
+
+                // Link alert to incident
+                $alert->update(['incident_id' => $incident->id]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Critical alert created - Incident generated',
+                    'data' => $alert,
+                    'is_new' => true,
+                    'incident_created' => true,
+                    'incident' => $incident
+                ], Response::HTTP_CREATED);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Alert created successfully',
+                'message' => 'Alert created successfully (severity: ' . $validated['severity'] . ')',
                 'data' => $alert,
                 'is_new' => true,
-                'incident_created' => $validated['severity'] === 'critical'
+                'incident_created' => false
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
@@ -158,14 +206,17 @@ class AlertSystemController extends Controller
                 ], Response::HTTP_NOT_FOUND);
             }
 
-            // Only resolve if currently active
+            // ✅ Only resolve if currently active
             if ($alert->status === 'active') {
                 $alert->update([
                     'status' => 'resolved',
                     'last_seen' => now()
                 ]);
 
-                // Log alert resolution
+                // Reset severity to warning when resolving
+                // (allows for future escalation if issue returns)
+                $alert->update(['severity' => 'warning']);
+
                 add_log('alert_resolved', 'alert', $validated['key']);
 
                 return response()->json([
@@ -184,6 +235,59 @@ class AlertSystemController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to resolve alert',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Get critical alerts only
+     * GET /api/alerts/critical
+     */
+    public function getCritical()
+    {
+        try {
+            $alerts = AlertSystem::where('severity', 'critical')
+                ->where('status', 'active')
+                ->orderBy('last_seen', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'count' => $alerts->count(),
+                'data' => $alerts
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve critical alerts',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Get alerts by type
+     * GET /api/alerts/type/{type}
+     */
+    public function getByType($type)
+    {
+        try {
+            $alerts = AlertSystem::where('type', $type)
+                ->orderBy('last_seen', 'desc')
+                ->limit(10)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'type' => $type,
+                'count' => $alerts->count(),
+                'data' => $alerts
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve alerts by type',
                 'error' => $e->getMessage()
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
