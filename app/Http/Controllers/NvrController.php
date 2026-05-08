@@ -3,24 +3,51 @@
 namespace App\Http\Controllers;
 
 use App\Models\Nvr;
-use App\Models\Alert;
+use App\Services\NvrAlertService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 
 class NvrController extends Controller
 {
+    /**
+     * Get all NVRs
+     * GET /api/nvrs
+     */
     public function index()
     {
-        $nvrs = Nvr::orderBy('name')->get();
-        
-        return response()->json([
-            'success' => true,
-            'count' => count($nvrs),
-            'data' => $nvrs
-        ], Response::HTTP_OK);
+        try {
+            $nvrs = Nvr::orderBy('name')->get();
+            
+            return response()->json([
+                'success' => true,
+                'count' => count($nvrs),
+                'data' => $nvrs
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve NVRs',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 
+    /**
+     * Update NVR with automatic alert handling
+     * POST /api/update-nvr (legacy)
+     * POST /api/nvrs (new standard)
+     * 
+     * Request body:
+     * {
+     *   "name": "NVR Main",
+     *   "type": "standard|master",
+     *   "status": "online|offline",
+     *   "sync_status": "synced|lost",
+     *   "cameras_count": 15,
+     *   "disk_usage": 75.5
+     * }
+     */
     public function update(Request $request)
     {
         try {
@@ -47,86 +74,184 @@ class NvrController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $nvr = Nvr::where('name', $validated['name'])->first();
-        
-        if (!$nvr) {
-            $nvr = Nvr::create([
-                'name' => $validated['name'],
-                'type' => $validated['type'] ?? 'standard',
-                'sync_status' => $validated['sync_status'] ?? 'synced',
-                'status' => $validated['status'],
-                'cameras_count' => $validated['cameras_count'] ?? 0,
-                'disk_usage' => $validated['disk_usage'] ?? 0,
-                'last_check' => now()
-            ]);
-            
-            if ($validated['status'] === 'offline') {
-                Alert::create([
-                    'message' => "New NVR detected offline: " . $validated['name'],
-                    'type' => "nvr"
-                ]);
-                add_log('nvr_offline', 'nvr', $validated['name']);
+        try {
+            // ✅ PROCESS NVR WITH AUTOMATIC ALERTS
+            $result = NvrAlertService::processNvr(
+                name: $validated['name'],
+                type: $validated['type'] ?? 'standard',
+                status: $validated['status'],
+                syncStatus: $validated['sync_status'] ?? null,
+                camerasCount: $validated['cameras_count'] ?? null,
+                diskUsage: $validated['disk_usage'] ?? null
+            );
+
+            $nvr = $result['nvr'];
+            $action = $result['action'];
+
+            // Build response
+            $response = [
+                'success' => true,
+                'data' => $nvr,
+                'action' => $action
+            ];
+
+            // Add alert info
+            if (isset($result['offline_alert'])) {
+                $response['offline_alert'] = $result['offline_alert'];
             }
-            
+            if (isset($result['sync_alert'])) {
+                $response['sync_alert'] = $result['sync_alert'];
+            }
+            if (isset($result['disk_alert'])) {
+                $response['disk_alert'] = $result['disk_alert'];
+            }
+
+            // Add incident info
+            if ($result['incident_created']) {
+                $response['incident_created'] = true;
+            }
+            if ($result['alert_resolved']) {
+                $response['alert_resolved'] = true;
+            }
+
+            // Build message
+            $messages = [];
+            if ($validated['status'] === 'offline') {
+                $messages[] = '🔴 NVR OFFLINE - Critical alert created';
+            } elseif ($action === 'resolved_offline') {
+                $messages[] = '✅ NVR is back ONLINE - Alert resolved';
+            }
+            if (isset($result['sync_alert'])) {
+                $severity = $result['sync_alert']['severity'] === 'critical' 
+                    ? '🔴 CRITICAL' 
+                    : '⚠️ WARNING';
+                $count = $result['sync_alert']['count'] ?? 0;
+                $messages[] = "{$severity} Sync Loss #{$count}";
+            }
+            if (isset($result['disk_alert'])) {
+                $messages[] = '⚠️ Disk usage warning';
+            }
+
+            $response['message'] = implode(' | ', $messages) ?: 'NVR updated successfully';
+
+            $statusCode = match ($action) {
+                'offline' => Response::HTTP_BAD_REQUEST,
+                'created' => Response::HTTP_CREATED,
+                default => Response::HTTP_OK
+            };
+
+            return response()->json($response, $statusCode);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process NVR',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Alias for update (POST /api/nvrs)
+     */
+    public function store(Request $request)
+    {
+        return $this->update($request);
+    }
+
+    /**
+     * Get NVR status for dashboard
+     * GET /api/nvrs/{name}
+     */
+    public function getStatus($name)
+    {
+        try {
+            $status = NvrAlertService::getNvrStatus($name);
+
+            if (isset($status['error'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $status['error']
+                ], Response::HTTP_NOT_FOUND);
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => 'NVR created successfully',
-                'data' => $nvr
-            ], Response::HTTP_CREATED);
+                'data' => $status
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve NVR status',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
 
-        $oldStatus = $nvr->status;
-        $oldCamerasCount = $nvr->cameras_count;
-        $oldDiskUsage = $nvr->disk_usage;
-        $oldSyncStatus = $nvr->sync_status;
+    /**
+     * Get all offline/failed NVRs
+     * GET /api/nvrs/failed
+     */
+    public function getFailed()
+    {
+        try {
+            $failedNvrs = NvrAlertService::getFailedNvrs();
 
-        $nvr->update([
-            'type' => $validated['type'] ?? $nvr->type,
-            'sync_status' => $validated['sync_status'] ?? $oldSyncStatus,
-            'status' => $validated['status'],
-            'cameras_count' => $validated['cameras_count'] ?? $oldCamerasCount,
-            'disk_usage' => $validated['disk_usage'] ?? $oldDiskUsage,
-            'last_check' => now()
-        ]);
-
-        // ===== ALERTS =====
-        if ($oldStatus !== 'offline' && $validated['status'] === 'offline') {
-            Alert::create([
-                'message' => "NVR offline: " . $validated['name'],
-                'type' => 'nvr'
-            ]);
-            add_log('nvr_offline', 'nvr', $validated['name']);
-        } elseif ($oldStatus === 'offline' && $validated['status'] === 'online') {
-            add_log('nvr_up', 'nvr', $validated['name']);
+            return response()->json([
+                'success' => true,
+                'count' => count($failedNvrs),
+                'data' => $failedNvrs
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve failed NVRs',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
 
-        // Log sync status changes for master NVRs
-        if ($validated['type'] === 'master' && $oldSyncStatus !== ($validated['sync_status'] ?? $oldSyncStatus)) {
-            if (($validated['sync_status'] ?? $oldSyncStatus) === 'lost') {
-                add_log('nvr_sync_lost', 'nvr', $validated['name']);
-            } elseif ($oldSyncStatus === 'lost' && ($validated['sync_status'] ?? $oldSyncStatus) === 'synced') {
-                add_log('nvr_sync_restored', 'nvr', $validated['name']);
-            }
+    /**
+     * Get critical NVRs
+     * GET /api/nvrs/critical
+     */
+    public function getCritical()
+    {
+        try {
+            $criticalNvrs = NvrAlertService::getCriticalNvrs();
+
+            return response()->json([
+                'success' => true,
+                'count' => count($criticalNvrs),
+                'data' => $criticalNvrs
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve critical NVRs',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
 
-        if (($validated['disk_usage'] ?? 0) > 90) {
-            Alert::create([
-                'message' => "NVR disk full: " . $validated['name'],
-                'type' => 'nvr'
-            ]);
+    /**
+     * Get NVR statistics
+     * GET /api/nvrs/stats
+     */
+    public function getStats()
+    {
+        try {
+            $stats = NvrAlertService::getStatistics();
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve NVR statistics',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
-
-        if ($validated['type'] === 'master' && $validated['sync_status'] === 'lost') {
-            Alert::create([
-                'message' => "NVR MASTER sync lost: " . $validated['name'],
-                'type' => 'nvr'
-            ]);
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'NVR updated successfully',
-            'data' => $nvr
-        ], Response::HTTP_OK);
     }
 }
