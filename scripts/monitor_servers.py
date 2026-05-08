@@ -265,10 +265,11 @@ while True:
                     backup_failure_count[server["name"]] = backup_failure_count.get(server["name"], 0) + 1
                     consecutive_failures = backup_failure_count[server["name"]]
                     
-                    # Severity based on consecutive failures
-                    severity = "critical" if consecutive_failures >= 2 else "warning"
+                    # ✅ ESCALATION: 1-2 failures = warning, 3+ = critical
+                    severity = "critical" if consecutive_failures >= 3 else "warning"
                     
-                    print(f"💾 Backup [{server['name']}] → FAILED (consecutive: {consecutive_failures}) {severity.upper()}")
+                    status_msg = f"💾 Backup [{server['name']}] → FAILED | Consecutive: {consecutive_failures} | {severity.upper()}"
+                    print(status_msg)
                     
                     # Send alert
                     alert_key = f"backup_failed_{server['name'].replace(' ', '_')}"
@@ -280,19 +281,23 @@ while True:
                             alert_type="backup",
                             severity=severity
                         )
-                        print(f"🚨 Alert: Backup failed for {server['name']}")
+                        if severity == "critical":
+                            print(f"   🔴 CRITICAL: Backup failed {consecutive_failures}x - Incident created")
+                        else:
+                            print(f"   ⚠️ Alert: {severity.upper()}")
                 else:
                     # Backup succeeded
                     print(f"💾 Backup [{server['name']}] → SUCCESS")
                     
                     # Reset failure count on success
                     if backup_failure_count.get(server["name"], 0) > 0:
+                        prev_failures = backup_failure_count[server["name"]]
                         backup_failure_count[server["name"]] = 0
                         
                         # Resolve alert if it was previously failed
                         alert_key = f"backup_failed_{server['name'].replace(' ', '_')}"
                         resolve_alert(alert_key)
-                        print(f"✅ Resolved: Backup succeeded for {server['name']}")
+                        print(f"   ✅ Resolved ({prev_failures} previous failures) - Counter reset")
 
                 last_backup_status[server["name"]] = backup_status
                 last_backup_time[server["name"]] = current_time
