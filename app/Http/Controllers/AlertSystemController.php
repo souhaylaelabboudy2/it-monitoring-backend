@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AlertSystem;
 use App\Models\Incident;
+use App\Services\IncidentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
@@ -36,12 +37,12 @@ class AlertSystemController extends Controller
     }
 
     /**
-     * Store or update alert with escalation logic
+     * Store or update alert with automatic incident creation
      * POST /api/alerts
      * 
      * Request body:
      * {
-     *   "key": "server_down_Active_Directory",
+     *   "key": "server_offline_Active_Directory",
      *   "title": "Server Active Directory is DOWN",
      *   "message": "Server not responding to ping",
      *   "type": "server",
@@ -71,11 +72,10 @@ class AlertSystemController extends Controller
             $alert = AlertSystem::where('key', $validated['key'])->first();
 
             if ($alert) {
-                // ✅ ESCALATION TRACKING: Update existing alert
+                // ✅ UPDATE EXISTING ALERT
                 $oldSeverity = $alert->severity;
                 $newSeverity = $validated['severity'];
                 
-                // Update alert with new data
                 $alert->update([
                     'title' => $validated['title'],
                     'message' => $validated['message'],
@@ -84,42 +84,31 @@ class AlertSystemController extends Controller
                     'last_seen' => now()
                 ]);
 
-                // ✅ INCIDENT CREATION ONLY WHEN ESCALATING TO CRITICAL
-                if ($newSeverity === 'critical' && $oldSeverity !== 'critical' && !$alert->incident_id) {
-                    // Create incident ONLY ONCE when severity becomes critical
-                    $incident = Incident::create([
-                        'title' => $validated['title'],
-                        'description' => $validated['message'],
-                        'severity' => 'high',
-                        'status' => 'open'
-                    ]);
-
-                    // Link alert to the incident
-                    $alert->update(['incident_id' => $incident->id]);
-
-                    add_log('incident_escalation', 'alert', "Alert escalated to critical: {$validated['key']}");
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Alert escalated to CRITICAL - Incident created',
-                        'data' => $alert,
-                        'is_new' => false,
-                        'escalated' => true,
-                        'incident_created' => true,
-                        'incident' => $incident
-                    ], Response::HTTP_OK);
-                }
-
-                add_log('alert_updated', 'alert', "Alert updated: {$validated['key']}");
-
-                return response()->json([
+                $result = [
                     'success' => true,
-                    'message' => 'Alert updated (severity: ' . $newSeverity . ')',
                     'data' => $alert,
                     'is_new' => false,
-                    'escalated' => false,
                     'severity_changed' => $oldSeverity !== $newSeverity
-                ], Response::HTTP_OK);
+                ];
+
+                // ✅ AUTOMATIC INCIDENT CREATION FOR CRITICAL ALERTS (ONLY ONCE)
+                // Only create incident if:
+                // 1. Alert is now critical AND
+                // 2. Alert didn't have an incident before
+                if ($newSeverity === 'critical' && !$alert->incident_id) {
+                    $incidentResult = $this->createIncidentForAlert($validated, $alert);
+                    $result['incident'] = $incidentResult['incident'];
+                    $result['incident_action'] = $incidentResult['action'];
+                    $result['message'] = 'Alert escalated to CRITICAL - Incident created';
+                } elseif ($newSeverity === 'critical' && $alert->incident_id) {
+                    // Alert already has an incident, just update it
+                    $result['message'] = 'Alert updated - Existing incident maintained';
+                } else {
+                    $result['message'] = 'Alert updated';
+                }
+
+                add_log('alert_updated', 'alert', "Alert: {$validated['key']}");
+                return response()->json($result, Response::HTTP_OK);
             }
 
             // ✅ CREATE NEW ALERT
@@ -135,35 +124,25 @@ class AlertSystemController extends Controller
 
             add_log('alert_created', 'alert', $validated['title']);
 
-            // ✅ CREATE INCIDENT ONLY IF NEW ALERT IS CRITICAL
-            if ($validated['severity'] === 'critical') {
-                $incident = Incident::create([
-                    'title' => $validated['title'],
-                    'description' => $validated['message'],
-                    'severity' => 'high',
-                    'status' => 'open'
-                ]);
-
-                // Link alert to incident
-                $alert->update(['incident_id' => $incident->id]);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Critical alert created - Incident generated',
-                    'data' => $alert,
-                    'is_new' => true,
-                    'incident_created' => true,
-                    'incident' => $incident
-                ], Response::HTTP_CREATED);
-            }
-
-            return response()->json([
+            $result = [
                 'success' => true,
-                'message' => 'Alert created successfully (severity: ' . $validated['severity'] . ')',
                 'data' => $alert,
                 'is_new' => true,
-                'incident_created' => false
-            ], Response::HTTP_CREATED);
+                'message' => 'Alert created'
+            ];
+
+            // ✅ AUTOMATIC INCIDENT CREATION FOR NEW CRITICAL ALERTS
+            if ($validated['severity'] === 'critical') {
+                $incidentResult = $this->createIncidentForAlert($validated, $alert);
+                $result['incident'] = $incidentResult['incident'];
+                $result['incident_action'] = $incidentResult['action'];
+                $result['message'] = 'Critical alert created - Incident generated';
+            }
+
+            return response()->json(
+                $result, 
+                Response::HTTP_CREATED
+            );
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -174,13 +153,120 @@ class AlertSystemController extends Controller
     }
 
     /**
+     * Create or update incident based on alert type
+     * Uses IncidentService for smart incident management
+     */
+    private function createIncidentForAlert(array $alert, AlertSystem $alertModel): array
+    {
+        $type = $alert['type'];
+        $severity = $alert['severity'];
+        
+        // Extract failure count from message if available
+        $failureCount = 1;
+        if (preg_match('/×(\d+)/', $alert['message'], $matches)) {
+            $failureCount = (int)$matches[1];
+        }
+
+        $incidentResult = match($type) {
+            'server' => $this->createServerIncident($alert, $failureCount),
+            'backup' => $this->createBackupIncident($alert, $failureCount),
+            'nvr' => $this->createNvrIncident($alert, $failureCount),
+            default => null
+        };
+
+        if ($incidentResult) {
+            // Link alert to incident
+            $alertModel->update(['incident_id' => $incidentResult['incident']->id]);
+            return $incidentResult;
+        }
+
+        // Fallback: create generic incident
+        $incidentResult = Incident::createOrUpdateByKey(
+            key: $alert['key'],
+            title: $alert['title'],
+            description: $alert['message'],
+            severity: $severity
+        );
+
+        $alertModel->update(['incident_id' => $incidentResult['incident']->id]);
+        return $incidentResult;
+    }
+
+    /**
+     * Create server-related incident
+     */
+    private function createServerIncident(array $alert, int $failureCount): array
+    {
+        // Extract server name from key or title
+        $serverName = $this->extractResourceName($alert['key'], 'server');
+        
+        if (strpos($alert['message'], 'OFFLINE') !== false || strpos($alert['title'], 'OFFLINE') !== false) {
+            return IncidentService::handleServerOffline($serverName);
+        }
+
+        // Generic server incident
+        return Incident::createOrUpdateByKey(
+            key: $alert['key'],
+            title: $alert['title'],
+            description: $alert['message'],
+            severity: $alert['severity'] === 'critical' ? 'critical' : 'warning'
+        );
+    }
+
+    /**
+     * Create backup-related incident
+     */
+    private function createBackupIncident(array $alert, int $failureCount): array
+    {
+        $serverName = $this->extractResourceName($alert['key'], 'backup');
+        
+        return IncidentService::handleBackupFailure($serverName, $failureCount);
+    }
+
+    /**
+     * Create NVR-related incident
+     */
+    private function createNvrIncident(array $alert, int $failureCount): array
+    {
+        $nvrName = $this->extractResourceName($alert['key'], 'nvr');
+        
+        if (strpos($alert['message'], 'OFFLINE') !== false) {
+            return IncidentService::handleNvrOffline($nvrName);
+        } elseif (strpos($alert['message'], 'SYNC') !== false) {
+            return IncidentService::handleNvrSyncLoss($nvrName, $failureCount);
+        }
+
+        return Incident::createOrUpdateByKey(
+            key: $alert['key'],
+            title: $alert['title'],
+            description: $alert['message'],
+            severity: $alert['severity'] === 'critical' ? 'critical' : 'warning'
+        );
+    }
+
+    /**
+     * Extract resource name from alert key
+     * Examples: server_offline_Active_Directory → Active Directory
+     */
+    private function extractResourceName(string $key, string $type): string
+    {
+        // Remove type prefix (server_offline_, backup_failed_, nvr_offline_, nvr_sync_lost_)
+        $patterns = [
+            'server' => '/^server_.*?_/',
+            'backup' => '/^backup_.*?_/',
+            'nvr' => '/^nvr_.*?_/'
+        ];
+
+        $pattern = $patterns[$type] ?? '/^[a-z]+_.*?_/';
+        $name = preg_replace($pattern, '', $key);
+        
+        // Convert underscores back to spaces
+        return str_replace('_', ' ', $name);
+    }
+
+    /**
      * Resolve alert
      * POST /api/alerts/resolve
-     * 
-     * Request body:
-     * {
-     *   "key": "server_down_Active_Directory"
-     * }
      */
     public function resolve(Request $request)
     {
@@ -206,22 +292,26 @@ class AlertSystemController extends Controller
                 ], Response::HTTP_NOT_FOUND);
             }
 
-            // ✅ Only resolve if currently active
             if ($alert->status === 'active') {
                 $alert->update([
                     'status' => 'resolved',
+                    'severity' => 'info',
                     'last_seen' => now()
                 ]);
 
-                // Reset severity to warning when resolving
-                // (allows for future escalation if issue returns)
-                $alert->update(['severity' => 'warning']);
+                // Also resolve linked incident if it exists
+                if ($alert->incident_id) {
+                    $incident = Incident::find($alert->incident_id);
+                    if ($incident) {
+                        $incident->resolve();
+                    }
+                }
 
                 add_log('alert_resolved', 'alert', $validated['key']);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Alert resolved successfully',
+                    'message' => 'Alert and linked incident resolved',
                     'data' => $alert
                 ], Response::HTTP_OK);
             }
@@ -288,6 +378,52 @@ class AlertSystemController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve alerts by type',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Get all open incidents
+     * GET /api/incidents/open
+     */
+    public function getOpenIncidents()
+    {
+        try {
+            $incidents = IncidentService::getOpenIncidents();
+
+            return response()->json([
+                'success' => true,
+                'count' => count($incidents),
+                'data' => $incidents
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve open incidents',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Get critical open incidents
+     * GET /api/incidents/critical
+     */
+    public function getCriticalIncidents()
+    {
+        try {
+            $incidents = IncidentService::getCriticalOpen();
+
+            return response()->json([
+                'success' => true,
+                'count' => count($incidents),
+                'data' => $incidents
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve critical incidents',
                 'error' => $e->getMessage()
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
