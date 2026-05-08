@@ -5,6 +5,7 @@ from datetime import datetime
 
 BACKUPS_URL = "http://127.0.0.1:8000/api/backups"
 ALERTS_URL = "http://127.0.0.1:8000/api/alerts"
+RESOLVE_URL = "http://127.0.0.1:8000/api/alerts/resolve"
 
 servers = [
     "Active Directory",
@@ -44,6 +45,36 @@ def send_alert(key, title, message, alert_type, severity):
         print(f"❌ Failed to send alert: {e}")
         return False
 
+def resolve_alert(key):
+    """Resolve alert when issue is fixed"""
+    try:
+        data = {"key": key}
+        response = requests.post(RESOLVE_URL, json=data, headers=HEADERS)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"❌ Failed to resolve alert: {e}")
+        return False
+
+def generate_error_message(failure_count):
+    """Generate realistic error messages for failures"""
+    errors = [
+        "Connection timeout to backup server",
+        "Insufficient disk space on backup destination",
+        "Database lock detected - backup aborted",
+        "Network connectivity lost during backup",
+        "Authentication failed for backup credentials",
+        "Backup destination unavailable",
+        "System resources exhausted",
+        "Backup window timeout exceeded"
+    ]
+    return errors[failure_count % len(errors)]
+
+def generate_backup_metrics():
+    """Generate realistic backup metrics"""
+    duration = random.randint(15, 180)  # 15-180 minutes
+    size = round(random.uniform(50, 500), 2)  # 50-500 GB
+    return duration, size
+
 print("✅ Backup Monitoring Script Started...\n")
 
 while True:
@@ -52,56 +83,58 @@ while True:
             # Simulate backup status (70% success, 30% failed)
             backup_status = random.choice(["success", "success", "success", "failed"])
             
-            data = {
-                "server_name": server,
-                "status": backup_status
-            }
-
-            # Send POST request to /api/backups
-            response = requests.post(BACKUPS_URL, json=data)
-            
-            if response.status_code == 201:
-                # ✅ ESCALATION LOGIC
-                if backup_status == "failed":
-                    # Increment failure count
-                    failure_count[server] = failure_count.get(server, 0) + 1
-                    consecutive_failures = failure_count[server]
+            # Get consecutive failure count
+            if backup_status == "failed":
+                failure_count[server] = failure_count.get(server, 0) + 1
+                consecutive_failures = failure_count[server]
+                
+                # ✅ ESCALATION LOGIC:
+                # 1 failure: WARNING
+                # 3+ consecutive failures: CRITICAL
+                severity = "critical" if consecutive_failures >= 3 else "warning"
+                
+                status_display = f"✅ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → FAILED"
+                status_display += f" | Consecutive: {consecutive_failures}"
+                status_display += f" | {severity.upper()}"
+                print(status_display)
+                
+                # Send alert with proper severity
+                alert_key = f"backup_failed_{server.replace(' ', '_')}"
+                if should_send_alert(alert_key):
+                    send_alert(
+                        key=alert_key,
+                        title=f"Backup FAILED for {server}",
+                        message=f"Backup failed {consecutive_failures} time(s) consecutively",
+                        alert_type="backup",
+                        severity=severity
+                    )
+                    if severity == "critical":
+                        print(f"   🔴 CRITICAL: Backup failed {consecutive_failures}x")
+                        print(f"   🚨 Incident created automatically")
+                    else:
+                        print(f"   ⚠️  Alert sent: {severity.upper()}")
+            else:
+                # ✅ SUCCESS - Reset counter and resolve if needed
+                if failure_count.get(server, 0) > 0:
+                    prev_failures = failure_count[server]
+                    failure_count[server] = 0
                     
-                    # Escalate severity based on consecutive failures
-                    severity = "critical" if consecutive_failures >= 3 else "warning"
-                    
-                    status_display = f"✅ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → FAILED | Consecutive: {consecutive_failures} | {severity.upper()}"
+                    status_display = f"✅ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → SUCCESS"
+                    status_display += f" | Resolved ({prev_failures} previous failures)"
                     print(status_display)
                     
-                    # Send escalating alert
+                    # Resolve the alert
                     alert_key = f"backup_failed_{server.replace(' ', '_')}"
-                    if should_send_alert(alert_key):
-                        send_alert(
-                            key=alert_key,
-                            title=f"Backup FAILED for {server}",
-                            message=f"Backup failed {consecutive_failures} time(s) consecutively",
-                            alert_type="backup",
-                            severity=severity
-                        )
-                        print(f"   🚨 Alert sent: {severity.upper()} - Failed {consecutive_failures}x")
+                    resolve_alert(alert_key)
+                    print(f"   ✅ Alert resolved - Failure counter reset")
                 else:
-                    # Backup succeeded - reset failure counter
-                    if failure_count.get(server, 0) > 0:
-                        old_count = failure_count[server]
-                        failure_count[server] = 0
-                        print(f"✅ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → SUCCESS | Resolved (was {old_count} failures)")
-                        print(f"   ✅ Failure counter reset")
-                    else:
-                        print(f"✅ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → SUCCESS")
-                    
-                    last_backup_status[server] = backup_status
-            else:
-                print(f"❌ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → HTTP {response.status_code}")
-                if response.text:
-                    print(f"   Response: {response.text}")
+                    print(f"✅ [{datetime.now().strftime('%H:%M:%S')}] Backup [{server}] → SUCCESS")
+                    print(f"   No issues detected")
+
+            last_backup_status[server] = backup_status
 
         except requests.exceptions.ConnectionError:
-            print(f"❌ Connection Error: Could not reach {BACKUPS_URL}")
+            print(f"❌ Connection Error: Could not reach API")
         except Exception as e:
             print(f"❌ Error [{server}]: {str(e)}")
 
