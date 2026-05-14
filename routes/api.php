@@ -8,6 +8,7 @@ use App\Http\Controllers\NvrController;
 use App\Http\Controllers\BackupController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\LogController;
+use App\Http\Controllers\ReportController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ZabbixController;
 
@@ -59,3 +60,11 @@ Route::get('/alerts/type/{type}', [AlertSystemController::class, 'getByType']);
 Route::get('/incidents/open', [AlertSystemController::class, 'getOpenIncidents']);
 Route::get('/incidents/critical', [AlertSystemController::class, 'getCriticalIncidents']);
 
+// Report endpoints
+Route::get('/reports/rssi-summary', [ReportController::class, 'rssiSummary']);
+Route::get('/reports/alerts', [ReportController::class, 'alertsSummary']);
+Route::get('/reports/incidents', [ReportController::class, 'incidentsSummary']);
+Route::get('/reports/backups', [ReportController::class, 'backupsSummary']);
+Route::get('/reports/nvrs', [ReportController::class, 'nvrsSummary']);
+Route::get('/reports/servers', [ReportController::class, 'serversSummary']);
+Route::get('/reports/health', [ReportController::class, 'healthCheck']);
