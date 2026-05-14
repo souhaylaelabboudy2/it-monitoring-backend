@@ -6,7 +6,6 @@ use App\Models\AlertSystem;
 use App\Models\Incident;
 use App\Models\Backup;
 use App\Models\Nvr;
-use App\Models\Server;
 use App\Models\Log;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -61,8 +60,7 @@ class ReportController extends Controller
                 'nvr_issues' => Nvr::where('status', 'offline')
                     ->count(),
                 
-                'offline_servers' => Server::where('status', 'offline')
-                    ->count(),
+                'offline_servers' => 0,
                 
                 'total_logs' => Log::whereBetween('created_at', $dateRange)
                     ->count(),
@@ -280,27 +278,14 @@ class ReportController extends Controller
      */
     public function serversSummary(Request $request)
     {
-        try {
-            $servers = Server::orderBy('id', 'desc')
-                ->get();
-
-            $byStatus = $servers->groupBy('status');
-
-            return response()->json([
-                'success' => true,
-                'online_count' => $byStatus->get('online', [])->count(),
-                'offline_count' => $byStatus->get('offline', [])->count(),
-                'servers' => $servers,
-                'total' => $servers->count()
-            ], Response::HTTP_OK);
-            
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve servers report',
-                'error' => $e->getMessage()
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Servers are monitored through Zabbix API, not local database.',
+            'online_count' => 0,
+            'offline_count' => 0,
+            'servers' => [],
+            'total' => 0
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -338,7 +323,7 @@ class ReportController extends Controller
                 ->whereBetween('created_at', $dateRange)
                 ->count();
 
-            $offlineServers = Server::where('status', 'offline')->count();
+            $offlineServers = 0;
 
             $offlineNvrs = Nvr::where('status', 'offline')->count();
 
