@@ -11,11 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('nvr', function (Blueprint $table) {
-            if (!Schema::hasColumn('nvr', 'type')) {
+        Schema::table('nvrs', function (Blueprint $table) {
+            if (!Schema::hasColumn('nvrs', 'type')) {
                 $table->enum('type', ['standard', 'master'])->default('standard');
             }
-            if (!Schema::hasColumn('nvr', 'sync_status')) {
+            if (!Schema::hasColumn('nvrs', 'sync_status')) {
                 $table->enum('sync_status', ['synced', 'lost'])->default('synced');
             }
         });
@@ -26,11 +26,11 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('nvr', function (Blueprint $table) {
-            if (Schema::hasColumn('nvr', 'type')) {
+        Schema::table('nvrs', function (Blueprint $table) {
+            if (Schema::hasColumn('nvrs', 'type')) {
                 $table->dropColumn('type');
             }
-            if (Schema::hasColumn('nvr', 'sync_status')) {
+            if (Schema::hasColumn('nvrs', 'sync_status')) {
                 $table->dropColumn('sync_status');
             }
         });

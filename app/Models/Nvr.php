@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Nvr extends Model
 {
-    protected $table = 'nvr';
+    protected $table = 'nvrs';
     public $timestamps = false;
     
     protected $fillable = [

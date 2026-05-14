@@ -11,15 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('nvr', function (Blueprint $table) {
+        Schema::table('nvrs', function (Blueprint $table) {
             // Update type to be enum instead of string
-            if (Schema::hasColumn('nvr', 'type')) {
+            if (Schema::hasColumn('nvrs', 'type')) {
                 $table->dropColumn('type');
             }
             $table->enum('type', ['standard', 'master'])->default('standard')->after('name');
             
             // Add sync_status field
-            if (!Schema::hasColumn('nvr', 'sync_status')) {
+            if (!Schema::hasColumn('nvrs', 'sync_status')) {
                 $table->enum('sync_status', ['synced', 'lost'])->default('synced')->after('type');
             }
         });
@@ -30,11 +30,11 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('nvr', function (Blueprint $table) {
-            if (Schema::hasColumn('nvr', 'type')) {
+        Schema::table('nvrs', function (Blueprint $table) {
+            if (Schema::hasColumn('nvrs', 'type')) {
                 $table->dropColumn('type');
             }
-            if (Schema::hasColumn('nvr', 'sync_status')) {
+            if (Schema::hasColumn('nvrs', 'sync_status')) {
                 $table->dropColumn('sync_status');
             }
         });
